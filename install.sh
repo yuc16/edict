@@ -47,6 +47,47 @@ check_deps() {
   log "openclaw.json: $OC_CFG"
 }
 
+# ── Step 0.5: 备份已有 Agent 数据 ──────────────────────────────
+backup_existing() {
+  AGENTS_DIR="$OC_HOME"
+  BACKUP_DIR="$OC_HOME/backups/pre-install-$(date +%Y%m%d-%H%M%S)"
+  HAS_EXISTING=false
+
+  # 检查是否有已存在的 workspace
+  for d in "$AGENTS_DIR"/workspace-*/; do
+    if [ -d "$d" ]; then
+      HAS_EXISTING=true
+      break
+    fi
+  done
+
+  if $HAS_EXISTING; then
+    info "检测到已有 Agent Workspace，自动备份中..."
+    mkdir -p "$BACKUP_DIR"
+
+    # 备份所有 workspace 目录
+    for d in "$AGENTS_DIR"/workspace-*/; do
+      if [ -d "$d" ]; then
+        ws_name=$(basename "$d")
+        cp -R "$d" "$BACKUP_DIR/$ws_name"
+      fi
+    done
+
+    # 备份 openclaw.json
+    if [ -f "$OC_CFG" ]; then
+      cp "$OC_CFG" "$BACKUP_DIR/openclaw.json"
+    fi
+
+    # 备份 agents 目录（agent 注册信息）
+    if [ -d "$AGENTS_DIR/agents" ]; then
+      cp -R "$AGENTS_DIR/agents" "$BACKUP_DIR/agents"
+    fi
+
+    log "已备份到: $BACKUP_DIR"
+    info "如需恢复，运行: cp -R $BACKUP_DIR/workspace-* $AGENTS_DIR/"
+  fi
+}
+
 # ── Step 1: 创建 Workspace ──────────────────────────────────
 create_workspaces() {
   info "创建 Agent Workspace..."
@@ -56,6 +97,11 @@ create_workspaces() {
     ws="$OC_HOME/workspace-$agent"
     mkdir -p "$ws/skills"
     if [ -f "$REPO_DIR/agents/$agent/SOUL.md" ]; then
+      if [ -f "$ws/SOUL.md" ]; then
+        # 已存在的 SOUL.md，先备份再覆盖
+        cp "$ws/SOUL.md" "$ws/SOUL.md.bak.$(date +%Y%m%d-%H%M%S)"
+        warn "已备份旧 SOUL.md → $ws/SOUL.md.bak.*"
+      fi
       sed "s|__REPO_DIR__|$REPO_DIR|g" "$REPO_DIR/agents/$agent/SOUL.md" > "$ws/SOUL.md"
     fi
     log "Workspace 已创建: $ws"
@@ -227,6 +273,7 @@ restart_gateway() {
 # ── Main ────────────────────────────────────────────────────
 banner
 check_deps
+backup_existing
 create_workspaces
 register_agents
 init_data
