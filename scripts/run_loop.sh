@@ -7,6 +7,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export EDICT_HOME="${EDICT_HOME:-$(dirname "$SCRIPT_DIR")}"
 INTERVAL="${1:-15}"
 LOG="/tmp/sansheng_liubu_refresh.log"
 PIDFILE="/tmp/sansheng_liubu_refresh.pid"

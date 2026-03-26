@@ -32,7 +32,7 @@
 import datetime
 import json, pathlib, sys, subprocess, logging, os, re
 
-_BASE = pathlib.Path(__file__).resolve().parent.parent
+_BASE = pathlib.Path(os.environ['EDICT_HOME']) if 'EDICT_HOME' in os.environ else pathlib.Path(__file__).resolve().parent.parent
 TASKS_FILE = _BASE / 'data' / 'tasks_source.json'
 REFRESH_SCRIPT = _BASE / 'scripts' / 'refresh_live_data.py'
 
