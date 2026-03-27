@@ -19,7 +19,7 @@ def main():
 
         # ── Clear ceremony localStorage so it doesn't show on every load
         page.goto(URL)
-        page.evaluate("localStorage.setItem('openclaw_court_date', new Date().toISOString().substring(0,10))")
+        page.evaluate("localStorage.setItem('edict_court_date', new Date().toISOString().substring(0,10))")
         page.reload()
         page.wait_for_load_state('networkidle')
         page.wait_for_timeout(2000)
@@ -93,7 +93,7 @@ def main():
 
         # 11. Ceremony - clear date then reload
         print('🎬 11 ceremony...')
-        page.evaluate("localStorage.removeItem('openclaw_court_date')")
+        page.evaluate("localStorage.removeItem('edict_court_date')")
         page.reload()
         page.wait_for_timeout(2500)
         page.screenshot(path=os.path.join(SHOTS, '11-ceremony.png'), full_page=False)

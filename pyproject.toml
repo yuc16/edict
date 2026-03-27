@@ -1,0 +1,27 @@
+[project]
+name = "edict-runtime"
+version = "0.1.0"
+description = "Edict local multi-agent runtime powered by OpenAI Codex OAuth."
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27.0",
+    "oauth-cli-kit>=0.1.3,<1.0.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.2",
+]
+
+[project.scripts]
+edict-codex-login = "scripts.login_openai_codex:main"
+
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["edict_runtime"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.15.7",
+]

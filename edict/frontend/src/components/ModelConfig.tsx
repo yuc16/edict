@@ -3,16 +3,11 @@ import { useStore } from '../store';
 import { api } from '../api';
 
 const FALLBACK_MODELS = [
-  { id: 'anthropic/claude-sonnet-4-6', l: 'Claude Sonnet 4.6', p: 'Anthropic' },
-  { id: 'anthropic/claude-opus-4-5', l: 'Claude Opus 4.5', p: 'Anthropic' },
-  { id: 'anthropic/claude-haiku-3-5', l: 'Claude Haiku 3.5', p: 'Anthropic' },
-  { id: 'openai/gpt-4o', l: 'GPT-4o', p: 'OpenAI' },
-  { id: 'openai/gpt-4o-mini', l: 'GPT-4o Mini', p: 'OpenAI' },
-  { id: 'google/gemini-2.5-pro', l: 'Gemini 2.5 Pro', p: 'Google' },
-  { id: 'copilot/claude-sonnet-4', l: 'Claude Sonnet 4', p: 'Copilot' },
-  { id: 'copilot/claude-opus-4.5', l: 'Claude Opus 4.5', p: 'Copilot' },
-  { id: 'copilot/gpt-4o', l: 'GPT-4o', p: 'Copilot' },
-  { id: 'copilot/gemini-2.5-pro', l: 'Gemini 2.5 Pro', p: 'Copilot' },
+  { id: 'openai-codex/gpt-5.1-codex', l: 'GPT-5.1 Codex', p: 'OpenAI Codex' },
+  { id: 'openai-codex/gpt-5.3-codex', l: 'GPT-5.3 Codex', p: 'OpenAI Codex' },
+  { id: 'openai-codex/gpt-5.4', l: 'GPT-5.4', p: 'OpenAI Codex' },
+  { id: 'openai-codex/gpt-5-mini', l: 'GPT-5 Mini', p: 'OpenAI Codex' },
+  { id: 'openai-codex/gpt-4o', l: 'GPT-4o', p: 'OpenAI Codex' },
 ];
 
 const CHANNELS = [
@@ -77,7 +72,7 @@ export default function ModelConfig() {
     try {
       const r = await api.setModel(agentId, model);
       if (r.ok) {
-        setStatusMap((p) => ({ ...p, [agentId]: { cls: 'ok', text: '✅ 已提交，Gateway 重启中（约5秒）' } }));
+        setStatusMap((p) => ({ ...p, [agentId]: { cls: 'ok', text: '✅ 已提交，约5秒后刷新配置' } }));
         toast(agentId + ' 模型已更改', 'ok');
         setTimeout(() => loadAgentConfig(), 5500);
       } else {
@@ -152,7 +147,7 @@ export default function ModelConfig() {
             }}>应用</button>
           {channelStatus && <span style={{ fontSize: 12, color: channelStatus.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }}>{channelStatus}</span>}
         </div>
-        <div style={{ fontSize: 11, color: 'var(--muted)' }}>自动派发时使用的 OpenClaw 通知渠道（需已在 openclaw.json 中配置对应 channel）</div>
+        <div style={{ fontSize: 11, color: 'var(--muted)' }}>自动派发时使用的看板通知渠道；本地编排器默认可直接在终端模式运行。</div>
       </div>
 
       {/* Change Log */}

@@ -42,7 +42,7 @@ def _backup_and_restore():
 # ── TEST 1: 脏标题(含文件路径+Conversation)应被清洗后创建
 def test_dirty_title_cleaned():
     cmd_create('JJC-TEST-E2E-01',
-        '全面审查/Users/bingsen/clawd/openclaw-sansheng-liubu/这个项目\nConversation info (xxx)',
+        '全面审查/Users/bingsen/clawd/edict/这个项目\nConversation info (xxx)',
         'Zhongshu', '中书省', '中书令',
         '下旨（自动预建）：全面审查/Users/bingsen/clawd/项目')
     t = _get_task('JJC-TEST-E2E-01')
@@ -55,7 +55,7 @@ def test_dirty_title_cleaned():
 
 # ── TEST 2: 纯文件路径标题被拒绝
 def test_pure_path_rejected():
-    cmd_create('JJC-TEST-E2E-02', '/Users/bingsen/clawd/openclaw-sansheng-liubu/', 'Zhongshu', '中书省', '中书令')
+    cmd_create('JJC-TEST-E2E-02', '/Users/bingsen/clawd/edict/', 'Zhongshu', '中书省', '中书令')
     assert _get_task('JJC-TEST-E2E-02') is None, "纯路径标题应被拒绝"
 
 

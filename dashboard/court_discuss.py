@@ -15,10 +15,19 @@
 import json
 import logging
 import os
+import sys
 import time
 import uuid
+from pathlib import Path
 
 logger = logging.getLogger('court_discuss')
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from edict_runtime.codex import CodexClient
+from edict_runtime.config import load_runtime_config
 
 # ── 官员角色设定 ──
 
@@ -277,202 +286,26 @@ def get_fate_event() -> str:
 
 # ── LLM 集成 ──
 
-_PREFERRED_MODELS = ['gpt-4o-mini', 'claude-haiku', 'gpt-5-mini', 'gemini-3-flash', 'gemini-flash']
-
-# GitHub Copilot 模型列表 (通过 Copilot Chat API 可用)
-_COPILOT_MODELS = [
-    'gpt-4o', 'gpt-4o-mini', 'claude-sonnet-4', 'claude-haiku-3.5',
-    'gemini-2.0-flash', 'o3-mini',
-]
-_COPILOT_PREFERRED = ['gpt-4o-mini', 'claude-haiku', 'gemini-flash', 'gpt-4o']
-
-
-def _pick_chat_model(models: list[dict]) -> str | None:
-    """从 provider 的模型列表中选一个适合聊天的轻量模型。"""
-    ids = [m['id'] for m in models if isinstance(m, dict) and 'id' in m]
-    for pref in _PREFERRED_MODELS:
-        for mid in ids:
-            if pref in mid:
-                return mid
-    return ids[0] if ids else None
-
-
-def _read_copilot_token() -> str | None:
-    """读取 openclaw 管理的 GitHub Copilot token。"""
-    token_path = os.path.expanduser('~/.openclaw/credentials/github-copilot.token.json')
-    if not os.path.exists(token_path):
-        return None
+def _get_llm_model() -> str | None:
     try:
-        with open(token_path) as f:
-            cred = json.load(f)
-        token = cred.get('token', '')
-        expires = cred.get('expiresAt', 0)
-        # 检查 token 是否过期（毫秒时间戳）
-        import time
-        if expires and time.time() * 1000 > expires:
-            logger.warning('Copilot token expired')
-            return None
-        return token if token else None
+        cfg = load_runtime_config()
     except Exception as e:
-        logger.warning('Failed to read copilot token: %s', e)
+        logger.warning('Failed to load runtime config: %s', e)
         return None
-
-
-def _get_llm_config() -> dict | None:
-    """从 openclaw 配置读取 LLM 设置，支持环境变量覆盖。
-
-    优先级: 环境变量 > github-copilot token > 本地 copilot-proxy > anthropic > 其他 provider
-    """
-    # 1. 环境变量覆盖（保留向后兼容）
-    env_key = os.environ.get('OPENCLAW_LLM_API_KEY', '')
-    if env_key:
-        return {
-            'api_key': env_key,
-            'base_url': os.environ.get('OPENCLAW_LLM_BASE_URL', 'https://api.openai.com/v1'),
-            'model': os.environ.get('OPENCLAW_LLM_MODEL', 'gpt-4o-mini'),
-            'api_type': 'openai',
-        }
-
-    # 2. GitHub Copilot token（最优先 — 免费、稳定、无需额外配置）
-    copilot_token = _read_copilot_token()
-    if copilot_token:
-        # 选一个 copilot 支持的模型
-        model = 'gpt-4o'
-        logger.info('Court discuss using github-copilot token, model=%s', model)
-        return {
-            'api_key': copilot_token,
-            'base_url': 'https://api.githubcopilot.com',
-            'model': model,
-            'api_type': 'github-copilot',
-        }
-
-    # 3. 从 ~/.openclaw/openclaw.json 读取其他 provider 配置
-    openclaw_cfg = os.path.expanduser('~/.openclaw/openclaw.json')
-    if not os.path.exists(openclaw_cfg):
-        return None
-
-    try:
-        with open(openclaw_cfg) as f:
-            cfg = json.load(f)
-
-        providers = cfg.get('models', {}).get('providers', {})
-
-        # 按优先级排序：copilot-proxy > anthropic > 其他
-        ordered = []
-        for preferred in ['copilot-proxy', 'anthropic']:
-            if preferred in providers:
-                ordered.append(preferred)
-        ordered.extend(k for k in providers if k not in ordered)
-
-        for name in ordered:
-            prov = providers.get(name)
-            if not prov:
-                continue
-            api_type = prov.get('api', '')
-            base_url = prov.get('baseUrl', '')
-            api_key = prov.get('apiKey', '')
-            if not base_url:
-                continue
-
-            # 跳过无 key 且非本地的 provider
-            if not api_key or api_key == 'n/a':
-                if 'localhost' not in base_url and '127.0.0.1' not in base_url:
-                    continue
-
-            model_id = _pick_chat_model(prov.get('models', []))
-            if not model_id:
-                continue
-
-            # 本地代理先探测是否可用
-            if 'localhost' in base_url or '127.0.0.1' in base_url:
-                try:
-                    import urllib.request
-                    probe = urllib.request.Request(base_url.rstrip('/') + '/models', method='GET')
-                    urllib.request.urlopen(probe, timeout=2)
-                except Exception:
-                    logger.info('Skipping provider=%s (not reachable)', name)
-                    continue
-
-            logger.info('Court discuss using openclaw provider=%s model=%s api=%s', name, model_id, api_type)
-            send_auth = prov.get('authHeader', True) is not False and api_key not in ('', 'n/a')
-            return {
-                'api_key': api_key if send_auth else '',
-                'base_url': base_url,
-                'model': model_id,
-                'api_type': api_type,
-            }
-    except Exception as e:
-        logger.warning('Failed to read openclaw config: %s', e)
-
-    return None
+    return cfg.get('agents', {}).get('zaochao', {}).get('model') or cfg.get('defaultModel')
 
 
 def _llm_complete(system_prompt: str, user_prompt: str, max_tokens: int = 1024) -> str | None:
-    """调用 LLM API（自动适配 GitHub Copilot / OpenAI / Anthropic 协议）。"""
-    config = _get_llm_config()
-    if not config:
+    _ = max_tokens
+    model = _get_llm_model()
+    if not model:
         return None
-
-    import urllib.request
-    import urllib.error
-
-    api_type = config.get('api_type', 'openai-completions')
-
-    if api_type == 'anthropic-messages':
-        # Anthropic Messages API
-        url = config['base_url'].rstrip('/') + '/v1/messages'
-        headers = {
-            'Content-Type': 'application/json',
-            'x-api-key': config['api_key'],
-            'anthropic-version': '2023-06-01',
-        }
-        payload = json.dumps({
-            'model': config['model'],
-            'system': system_prompt,
-            'messages': [{'role': 'user', 'content': user_prompt}],
-            'max_tokens': max_tokens,
-            'temperature': 0.9,
-        }).encode()
-        try:
-            req = urllib.request.Request(url, data=payload, headers=headers, method='POST')
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = json.loads(resp.read().decode())
-                return data['content'][0]['text']
-        except Exception as e:
-            logger.warning('Anthropic LLM call failed: %s', e)
-            return None
-    else:
-        # OpenAI-compatible API (也适用于 github-copilot)
-        if api_type == 'github-copilot':
-            url = config['base_url'].rstrip('/') + '/chat/completions'
-            headers = {
-                'Content-Type': 'application/json',
-                'Authorization': f"Bearer {config['api_key']}",
-                'Editor-Version': 'vscode/1.96.0',
-                'Copilot-Integration-Id': 'vscode-chat',
-            }
-        else:
-            url = config['base_url'].rstrip('/') + '/chat/completions'
-            headers = {'Content-Type': 'application/json'}
-            if config.get('api_key'):
-                headers['Authorization'] = f"Bearer {config['api_key']}"
-        payload = json.dumps({
-            'model': config['model'],
-            'messages': [
-                {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': user_prompt},
-            ],
-            'max_tokens': max_tokens,
-            'temperature': 0.9,
-        }).encode()
-        try:
-            req = urllib.request.Request(url, data=payload, headers=headers, method='POST')
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = json.loads(resp.read().decode())
-                return data['choices'][0]['message']['content']
-        except Exception as e:
-            logger.warning('LLM call failed: %s', e)
-            return None
+    try:
+        client = CodexClient()
+        return client.complete_text(model=model, system=system_prompt, user=user_prompt).text
+    except Exception as e:
+        logger.warning('Codex LLM call failed: %s', e)
+        return None
 
 
 def _llm_discuss(session: dict, user_message: str = None, decree: str = None) -> dict | None:

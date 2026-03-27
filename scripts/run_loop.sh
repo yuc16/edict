@@ -8,6 +8,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export EDICT_HOME="${EDICT_HOME:-$(dirname "$SCRIPT_DIR")}"
+PYTHON_BIN="${EDICT_PYTHON:-$EDICT_HOME/.venv/bin/python}"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  PYTHON_BIN="python3"
+fi
 INTERVAL="${1:-15}"
 LOG="/tmp/sansheng_liubu_refresh.log"
 PIDFILE="/tmp/sansheng_liubu_refresh.pid"
@@ -58,20 +62,19 @@ echo "   按 Ctrl+C 停止"
 safe_run() {
   local script="$1"
   if command -v timeout &>/dev/null; then
-    timeout "$SCRIPT_TIMEOUT" python3 "$script" >> "$LOG" 2>&1 || {
+    timeout "$SCRIPT_TIMEOUT" "$PYTHON_BIN" "$script" >> "$LOG" 2>&1 || {
       local rc=$?
       if [[ $rc -eq 124 ]]; then
         echo "$(date '+%H:%M:%S') [loop] ⚠️ 脚本超时(${SCRIPT_TIMEOUT}s): $script" >> "$LOG"
       fi
     }
   else
-    python3 "$script" >> "$LOG" 2>&1 || true
+    "$PYTHON_BIN" "$script" >> "$LOG" 2>&1 || true
   fi
 }
 
 while true; do
   rotate_log
-  safe_run "$SCRIPT_DIR/sync_from_openclaw_runtime.py"
   safe_run "$SCRIPT_DIR/sync_agent_config.py"
   safe_run "$SCRIPT_DIR/apply_model_changes.py"
   safe_run "$SCRIPT_DIR/sync_officials_stats.py"

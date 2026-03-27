@@ -245,7 +245,7 @@ export interface AgentStatusInfo {
   lastActive?: string;
 }
 
-export interface GatewayStatus {
+export interface OrchestratorStatus {
   alive: boolean;
   probe: boolean;
   status: string;
@@ -253,7 +253,7 @@ export interface GatewayStatus {
 
 export interface AgentsStatusData {
   ok: boolean;
-  gateway: GatewayStatus;
+  gateway: OrchestratorStatus;
   agents: AgentStatusInfo[];
   checkedAt: string;
 }

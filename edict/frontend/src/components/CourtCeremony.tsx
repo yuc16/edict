@@ -7,11 +7,11 @@ export default function CourtCeremony() {
   const [out, setOut] = useState(false);
 
   useEffect(() => {
-    const lastOpen = localStorage.getItem('openclaw_court_date');
+    const lastOpen = localStorage.getItem('edict_court_date');
     const today = new Date().toISOString().substring(0, 10);
-    const pref = JSON.parse(localStorage.getItem('openclaw_court_pref') || '{"enabled":true}');
+    const pref = JSON.parse(localStorage.getItem('edict_court_pref') || '{"enabled":true}');
     if (!pref.enabled || lastOpen === today) return;
-    localStorage.setItem('openclaw_court_date', today);
+    localStorage.setItem('edict_court_date', today);
     setShow(true);
     const timer = setTimeout(() => skip(), 3500);
     return () => clearTimeout(timer);

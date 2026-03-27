@@ -63,7 +63,7 @@ export default function MonitorPanel() {
         <div className="as-panel">
           <div className="as-header">
             <span className="as-title">🔌 Agent 在线状态</span>
-            <span className={`as-gw ${gwCls}`}>Gateway: {gw?.status || '未知'}</span>
+            <span className={`as-gw ${gwCls}`}>编排器: {gw?.status || '未知'}</span>
             <button className="btn-refresh" onClick={() => loadAgentsStatus()} style={{ marginLeft: 8 }}>
               🔄 刷新
             </button>

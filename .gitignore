@@ -22,6 +22,7 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+.edict_runtime/
 
 # macOS
 .DS_Store

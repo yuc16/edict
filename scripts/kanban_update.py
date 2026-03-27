@@ -3,11 +3,7 @@
 看板任务更新工具 - 供各省部 Agent 调用
 
 本工具操作 data/tasks_source.json（JSON 看板模式）。
-如果您已部署 edict/backend（Postgres + Redis 事件总线模式），
-请使用 edict/backend API 端点代替本脚本，或运行迁移脚本：
-  python3 edict/migration/migrate_json_to_pg.py
-
-两种模式互相独立，数据不会自动同步。
+当前仓库默认使用本地编排器 + 看板数据文件，不再维护另一套后端模式。
 
 用法:
   # 新建任务（收旨时）

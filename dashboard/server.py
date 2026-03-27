@@ -4,7 +4,7 @@
 Port: 7891 (可通过 --port 修改)
 
 Endpoints:
-  GET  /                       → dashboard.html
+  GET  /                       → dashboard/dist/index.html
   GET  /api/live-status        → data/live_status.json
   GET  /api/agent-config       → data/agent_config.json
   POST /api/set-model          → {agentId, model}
@@ -16,8 +16,12 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+ROOT_DIR = pathlib.Path(__file__).parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 # 引入文件锁工具，确保与其他脚本并发安全
-scripts_dir = str(pathlib.Path(__file__).parent.parent / 'scripts')
+scripts_dir = str(ROOT_DIR / 'scripts')
 sys.path.insert(0, scripts_dir)
 from file_lock import atomic_json_read, atomic_json_write, atomic_json_update
 from utils import validate_url, read_json, now_iso
@@ -31,12 +35,14 @@ from court_discuss import (
 log = logging.getLogger('server')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(message)s', datefmt='%H:%M:%S')
 
-CHANNELS_DIR = pathlib.Path(__file__).parent.parent / 'edict' / 'backend' / 'app' / 'channels'
+CHANNELS_DIR = pathlib.Path(__file__).parent / 'channels'
 if str(CHANNELS_DIR.parent) not in sys.path:
     sys.path.insert(0, str(CHANNELS_DIR.parent))
 from channels import get_channel, get_channel_info, CHANNELS as NOTIFICATION_CHANNELS
+from edict_runtime.config import RUNTIME_HOME, load_runtime_state
+from edict_runtime.engine import get_runtime
 
-OCLAW_HOME = pathlib.Path.home() / '.openclaw'
+OCLAW_HOME = RUNTIME_HOME
 MAX_REQUEST_BODY = 1 * 1024 * 1024  # 1 MB
 ALLOWED_ORIGIN = None  # Set via --cors; None means restrict to localhost
 _DASHBOARD_PORT = 7891  # Updated at startup from --port arg
@@ -332,7 +338,7 @@ def add_remote_skill(agent_id, skill_name, source_url, description=''):
                 return {'ok': False, 'error': 'URL 无效或不安全（仅支持 HTTPS）'}
             
             # 从 URL 下载，带超时保护
-            req = Request(source_url, headers={'User-Agent': 'OpenClaw-SkillManager/1.0'})
+            req = Request(source_url, headers={'User-Agent': 'Edict-SkillManager/1.0'})
             try:
                 resp = urlopen(req, timeout=10)
                 content = resp.read(10 * 1024 * 1024).decode('utf-8')  # 最多 10MB
@@ -749,35 +755,12 @@ _AGENT_DEPTS = [
 
 
 def _check_gateway_alive():
-    """检测 Gateway 是否在运行。
-
-    Windows 上不要依赖 pgrep；优先通过本地端口探测判断。
-    """
-    if _check_gateway_probe():
-        return True
-    try:
-        if os.name == 'nt':
-            with socket.create_connection(('127.0.0.1', 18789), timeout=2):
-                return True
-            return False
-        result = subprocess.run(['pgrep', '-f', 'openclaw-gateway'],
-                                capture_output=True, text=True, timeout=5)
-        return result.returncode == 0
-    except Exception:
-        return False
+    """本地编排器随 server.py 进程一起工作。"""
+    return True
 
 
 def _check_gateway_probe():
-    """通过 HTTP probe 检测 Gateway 是否响应。"""
-    for url in ('http://127.0.0.1:18789/', 'http://127.0.0.1:18789/healthz'):
-        try:
-            from urllib.request import urlopen
-            resp = urlopen(url, timeout=3)
-            if 200 <= resp.status < 500:
-                return True
-        except Exception:
-            continue
-    return False
+    return True
 
 
 def _get_agent_session_status(agent_id):
@@ -806,15 +789,8 @@ def _get_agent_session_status(agent_id):
 
 
 def _check_agent_process(agent_id):
-    """检测是否有该 Agent 的 openclaw-agent 进程正在运行。"""
-    try:
-        result = subprocess.run(
-            ['pgrep', '-f', f'openclaw.*--agent.*{agent_id}'],
-            capture_output=True, text=True, timeout=5
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
+    state = load_runtime_state().get('agents', {}).get(agent_id, {})
+    return state.get('status') == 'running'
 
 
 def _check_agent_workspace(agent_id):
@@ -834,6 +810,7 @@ def get_agents_status():
     """
     gateway_alive = _check_gateway_alive()
     gateway_probe = _check_gateway_probe() if gateway_alive else False
+    runtime_state = load_runtime_state()
 
     agents = []
     seen_ids = set()
@@ -846,14 +823,12 @@ def get_agents_status():
         has_workspace = _check_agent_workspace(aid)
         last_ts, sess_count, is_busy = _get_agent_session_status(aid)
         process_alive = _check_agent_process(aid)
+        runtime_info = runtime_state.get('agents', {}).get(aid, {})
 
         # 状态判定
         if not has_workspace:
             status = 'unconfigured'
             status_label = '❌ 未配置'
-        elif not gateway_alive:
-            status = 'offline'
-            status_label = '🔴 Gateway 离线'
         elif process_alive or is_busy:
             status = 'running'
             status_label = '🟢 运行中'
@@ -895,6 +870,7 @@ def get_agents_status():
             'sessions': sess_count,
             'hasWorkspace': has_workspace,
             'processAlive': process_alive,
+            'runtime': runtime_info,
         })
 
     return {
@@ -902,7 +878,7 @@ def get_agents_status():
         'gateway': {
             'alive': gateway_alive,
             'probe': gateway_probe,
-            'status': '🟢 运行中' if gateway_probe else ('🟡 进程在但无响应' if gateway_alive else '🔴 未启动'),
+            'status': '🟢 本地编排器在线',
         },
         'agents': agents,
         'checkedAt': now_iso(),
@@ -915,35 +891,8 @@ def wake_agent(agent_id, message=''):
         return {'ok': False, 'error': f'agent_id 非法: {agent_id}'}
     if not _check_agent_workspace(agent_id):
         return {'ok': False, 'error': f'{agent_id} 工作空间不存在，请先配置'}
-    if not _check_gateway_alive():
-        return {'ok': False, 'error': 'Gateway 未启动，请先运行 openclaw gateway start'}
-
-    # agent_id 直接作为 runtime_id（openclaw agents list 中的注册名）
-    runtime_id = agent_id
     msg = message or f'🔔 系统心跳检测 — 请回复 OK 确认在线。当前时间: {now_iso()}'
-
-    def do_wake():
-        try:
-            cmd = ['openclaw', 'agent', '--agent', runtime_id, '-m', msg, '--timeout', '120']
-            log.info(f'🔔 唤醒 {agent_id}...')
-            # 带重试（最多2次）
-            for attempt in range(1, 3):
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=130)
-                if result.returncode == 0:
-                    log.info(f'✅ {agent_id} 已唤醒')
-                    return
-                err_msg = result.stderr[:200] if result.stderr else result.stdout[:200]
-                log.warning(f'⚠️ {agent_id} 唤醒失败(第{attempt}次): {err_msg}')
-                if attempt < 2:
-                    import time
-                    time.sleep(5)
-            log.error(f'❌ {agent_id} 唤醒最终失败')
-        except subprocess.TimeoutExpired:
-            log.error(f'❌ {agent_id} 唤醒超时(130s)')
-        except Exception as e:
-            log.warning(f'⚠️ {agent_id} 唤醒异常: {e}')
-    threading.Thread(target=do_wake, daemon=True).start()
-
+    get_runtime().wake_agent(agent_id, msg)
     return {'ok': True, 'message': f'{agent_id} 唤醒指令已发出，约10-30秒后生效'}
 
 
@@ -1975,146 +1924,9 @@ _STATE_LABELS = {
 
 
 def dispatch_for_state(task_id, task, new_state, trigger='state-transition'):
-    """推进/审批后自动派发对应 Agent（后台异步，不阻塞响应）。"""
-    agent_id = _STATE_AGENT_MAP.get(new_state)
-    if agent_id is None and new_state in ('Doing', 'Next'):
-        org = task.get('org', '')
-        agent_id = _ORG_AGENT_MAP.get(org)
-    if not agent_id:
-        log.info(f'ℹ️ {task_id} 新状态 {new_state} 无对应 Agent，跳过自动派发')
-        return
-
-    _update_task_scheduler(task_id, lambda t, s: (
-        s.update({
-            'lastDispatchAt': now_iso(),
-            'lastDispatchStatus': 'queued',
-            'lastDispatchAgent': agent_id,
-            'lastDispatchTrigger': trigger,
-        }),
-        _scheduler_add_flow(t, f'已入队派发：{new_state} → {agent_id}（{trigger}）', to=_STATE_LABELS.get(new_state, new_state))
-    ))
-
-    title = task.get('title', '(无标题)')
-    target_dept = task.get('targetDept', '')
-
-    # 根据 agent_id 构造针对性消息
-    _msgs = {
-        'taizi': (
-            f'📜 皇上旨意需要你处理\n'
-            f'任务ID: {task_id}\n'
-            f'旨意: {title}\n'
-            f'⚠️ 看板已有此任务，请勿重复创建。直接用 kanban_update.py 更新状态。\n'
-            f'请立即转交中书省起草执行方案。'
-        ),
-        'zhongshu': (
-            f'📜 旨意已到中书省，请起草方案\n'
-            f'任务ID: {task_id}\n'
-            f'旨意: {title}\n'
-            f'⚠️ 看板已有此任务记录，请勿重复创建。直接用 kanban_update.py state 更新状态。\n'
-            f'请立即起草执行方案，走完完整三省流程（中书起草→门下审议→尚书派发→六部执行）。'
-        ),
-        'menxia': (
-            f'📋 中书省方案提交审议\n'
-            f'任务ID: {task_id}\n'
-            f'旨意: {title}\n'
-            f'⚠️ 看板已有此任务，请勿重复创建。\n'
-            f'请审议中书省方案，给出准奏或封驳意见。'
-        ),
-        'shangshu': (
-            f'📮 门下省已准奏，请派发执行\n'
-            f'任务ID: {task_id}\n'
-            f'旨意: {title}\n'
-            f'{"建议派发部门: " + target_dept if target_dept else ""}\n'
-            f'⚠️ 看板已有此任务，请勿重复创建。\n'
-            f'请分析方案并派发给六部执行。'
-        ),
-    }
-    msg = _msgs.get(agent_id, (
-        f'📌 请处理任务\n'
-        f'任务ID: {task_id}\n'
-        f'旨意: {title}\n'
-        f'⚠️ 看板已有此任务，请勿重复创建。直接用 kanban_update.py 更新状态。'
-    ))
-
-    def _do_dispatch():
-        try:
-            if not _check_gateway_alive():
-                log.warning(f'⚠️ {task_id} 自动派发跳过: Gateway 未启动')
-                _update_task_scheduler(task_id, lambda t, s: s.update({
-                    'lastDispatchAt': now_iso(),
-                    'lastDispatchStatus': 'gateway-offline',
-                    'lastDispatchAgent': agent_id,
-                    'lastDispatchTrigger': trigger,
-                }))
-                return
-            # Fix #139/#182: dispatch channel 可配置；未配置时不传 --deliver 避免
-            # "unknown channel: feishu" 错误（非飞书用户）
-            _agent_cfg = read_json(DATA / 'agent_config.json', {})
-            _channel = (_agent_cfg.get('dispatchChannel') or '').strip()
-            cmd = ['openclaw', 'agent', '--agent', agent_id, '-m', msg, '--timeout', '300']
-            if _channel:
-                cmd.extend(['--deliver', '--channel', _channel])
-            max_retries = 2
-            err = ''
-            for attempt in range(1, max_retries + 1):
-                log.info(f'🔄 自动派发 {task_id} → {agent_id} (第{attempt}次)...')
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=310)
-                if result.returncode == 0:
-                    log.info(f'✅ {task_id} 自动派发成功 → {agent_id}')
-                    _update_task_scheduler(task_id, lambda t, s: (
-                        s.update({
-                            'lastDispatchAt': now_iso(),
-                            'lastDispatchStatus': 'success',
-                            'lastDispatchAgent': agent_id,
-                            'lastDispatchTrigger': trigger,
-                            'lastDispatchError': '',
-                        }),
-                        _scheduler_add_flow(t, f'派发成功：{agent_id}（{trigger}）', to=t.get('org', ''))
-                    ))
-                    return
-                err = result.stderr[:200] if result.stderr else result.stdout[:200]
-                log.warning(f'⚠️ {task_id} 自动派发失败(第{attempt}次): {err}')
-                if attempt < max_retries:
-                    import time
-                    time.sleep(5)
-            log.error(f'❌ {task_id} 自动派发最终失败 → {agent_id}')
-            _update_task_scheduler(task_id, lambda t, s: (
-                s.update({
-                    'lastDispatchAt': now_iso(),
-                    'lastDispatchStatus': 'failed',
-                    'lastDispatchAgent': agent_id,
-                    'lastDispatchTrigger': trigger,
-                    'lastDispatchError': err,
-                }),
-                _scheduler_add_flow(t, f'派发失败：{agent_id}（{trigger}）', to=t.get('org', ''))
-            ))
-        except subprocess.TimeoutExpired:
-            log.error(f'❌ {task_id} 自动派发超时 → {agent_id}')
-            _update_task_scheduler(task_id, lambda t, s: (
-                s.update({
-                    'lastDispatchAt': now_iso(),
-                    'lastDispatchStatus': 'timeout',
-                    'lastDispatchAgent': agent_id,
-                    'lastDispatchTrigger': trigger,
-                    'lastDispatchError': 'timeout',
-                }),
-                _scheduler_add_flow(t, f'派发超时：{agent_id}（{trigger}）', to=t.get('org', ''))
-            ))
-        except Exception as e:
-            log.warning(f'⚠️ {task_id} 自动派发异常: {e}')
-            _update_task_scheduler(task_id, lambda t, s: (
-                s.update({
-                    'lastDispatchAt': now_iso(),
-                    'lastDispatchStatus': 'error',
-                    'lastDispatchAgent': agent_id,
-                    'lastDispatchTrigger': trigger,
-                    'lastDispatchError': str(e)[:200],
-                }),
-                _scheduler_add_flow(t, f'派发异常：{agent_id}（{trigger}）', to=t.get('org', ''))
-            ))
-
-    threading.Thread(target=_do_dispatch, daemon=True).start()
-    log.info(f'🚀 {task_id} 推进后自动派发 → {agent_id}')
+    """推进/审批后自动派发对应 Agent（本地编排器模式）。"""
+    get_runtime().dispatch_for_state(task_id, task, new_state, trigger)
+    log.info(f'🚀 {task_id} 推进后自动派发（本地编排器）')
 
 
 def handle_advance_state(task_id, comment=''):
